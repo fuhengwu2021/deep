@@ -2,53 +2,23 @@ import pytorch_lightning as pl
 import torchmetrics
 
 BATCH_SIZE = 256
-NUM_EPOCHS = 150
+NUM_EPOCHS = 180
 LEARNING_RATE = 0.001
-NUM_WORKERS = 1
+NUM_WORKERS = 8
 
-# %% [markdown]
-# - Note that using multiple workers can sometimes cause issues with too many open files in PyTorch for small datasets. If we have problems with the data loader later, try setting `NUM_WORKERS = 0` and reload the notebook.
-
-# %% [markdown]
-# ## Implementing a Neural Network using PyTorch Lightning's `LightningModule`
-
-# %% [markdown]
-# - In this section, we set up the main model architecture using the `LightningModule` from PyTorch Lightning.
-# - In essence, `LightningModule` is a wrapper around a PyTorch module.
-# - We start with defining our neural network model in pure PyTorch, and then we use it in the `LightningModule` to get all the extra benefits that PyTorch Lightning provides.
-# - Here, for the PyTorch model, we are using an implementation from the Torchvision hub:
-# 
-# In this case, since Torchvision already offers a nice and efficient PyTorch implementation of MobileNet-v2, let's load it from the Torchvision hub:
-
-# %%
 import torch
 from hiq.vis import print_model
 
 pytorch_model = torch.hub.load(
-    "pytorch/vision:v0.11.0", "mobilenet_v3_small", weights=False
+    "pytorch/vision:v0.11.0", "mobilenet_v3_small", weights=None
 )
 
-print_model(pytorch_model)
-
-# %% [markdown]
-# - Since the Torchvision model above was implemented for ImageNet, which has a different number of classes than CIFAR-10, we define our own output layer below:
-
-# %%
 pytorch_model.classifier[-1] = torch.nn.Linear(
-    in_features=1024, out_features=10  # as in the original output layer
-)  # number of class labels in CIFAR-10)
+    in_features=1024, out_features=10
+)
 
-print_model(pytorch_model)
+#print_model(pytorch_model)
 
-# %% [markdown]
-# - Next, we can define our LightningModule as a wrapper around our PyTorch model:
-
-# %%
-# %load ../code_lightningmodule/lightningmodule_classifier_basic.py
-
-
-
-# LightningModule that receives a PyTorch model as input
 class LightningModel(pl.LightningModule):
     def __init__(self, model, learning_rate):
         super().__init__()
@@ -121,16 +91,16 @@ class LightningModel(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
 
-# %% [markdown]
+# 
 # ## Setting up the dataset
 
-# %% [markdown]
+# 
 # - In this section, we are going to set up our dataset.
 
-# %% [markdown]
+# 
 # ### Inspecting the dataset
 
-# %%
+#
 # %load ../code_dataset/dataset_cifar10_check.py
 from collections import Counter
 from torchvision import datasets
@@ -176,14 +146,14 @@ sorted(train_counter.items())
 print("\nTest label distribution:")
 sorted(test_counter.items())
 
-# %% [markdown]
+# 
 # ### Performance baseline
 
-# %% [markdown]
+# 
 # - Especially for imbalanced datasets, it's pretty helpful to compute a performance baseline.
 # - In classification contexts, a useful baseline is to compute the accuracy for a scenario where the model always predicts the majority class -- we want our model to be better than that!
 
-# %%
+#
 # %load ../code_dataset/performance_baseline.py
 majority_class = test_counter.most_common(1)[0]
 print("Majority class:", majority_class[0])
@@ -192,10 +162,10 @@ baseline_acc = majority_class[1] / sum(test_counter.values())
 print("Accuracy when always predicting the majority class:")
 print(f"{baseline_acc:.2f} ({baseline_acc*100:.2f}%)")
 
-# %% [markdown]
+# 
 # ## A quick visual check
 
-# %%
+#
 # %load ../code_dataset/plot_visual-check_basic.py
 #%matplotlib inline
 import matplotlib.pyplot as plt
@@ -206,6 +176,7 @@ import torchvision
 for images, labels in train_loader:
     break
 
+
 plt.figure(figsize=(8, 8))
 plt.axis("off")
 plt.title("Training images")
@@ -214,19 +185,19 @@ plt.imshow(
         torchvision.utils.make_grid(images[:64], padding=1, normalize=True), (1, 2, 0)
     )
 )
-plt.show()
+plt.savefig('training.png')
 
-# %% [markdown]
+# 
 # ### Setting up a `DataModule`
 
-# %% [markdown]
+# 
 # - There are three main ways we can prepare the dataset for Lightning. We can
 #   1. make the dataset part of the model;
 #   2. set up the data loaders as usual and feed them to the fit method of a Lightning Trainer -- the Trainer is introduced in the following subsection;
 #   3. create a LightningDataModule.
 # - Here, we will use approach 3, which is the most organized approach. The `LightningDataModule` consists of several self-explanatory methods, as we can see below:
 
-# %%
+#
 import os
 
 from torch.utils.data.dataset import random_split
@@ -238,6 +209,8 @@ class DataModule(pl.LightningDataModule):
     def __init__(self, data_path="./"):
         super().__init__()
         self.data_path = data_path
+        print(os.getpid(), "😎 call prepare data....")
+        self.prepare_data()
 
     def prepare_data(self):
         datasets.CIFAR10(root=self.data_path, download=True)
@@ -301,49 +274,21 @@ class DataModule(pl.LightningDataModule):
         )
         return test_loader
 
-# %% [markdown]
-# - Note that the `prepare_data` method is usually used for steps that only need to be executed once, for example, downloading the dataset; the `setup` method defines the dataset loading -- if we run our code in a distributed setting, this will be called on each node / GPU.
-# - Next, let's initialize the `DataModule`; we use a random seed for reproducibility (so that the data set is shuffled the same way when we re-execute this code):
 
 
-if __name__ == "__main__":
-    # %%
-    torch.manual_seed(1)
-    data_module = DataModule(data_path="./data")
 
-    # %% [markdown]
-    # ## Training the model using the PyTorch Lightning Trainer class
-
-    # %% [markdown]
-    # - Next, we initialize our model.
-    # - Also, we define a call back to obtain the model with the best validation set performance after training.
-    # - PyTorch Lightning offers [many advanced logging services](https://pytorch-lightning.readthedocs.io/en/latest/extensions/logging.html) like Weights & Biases. However, here, we will keep things simple and use the `CSVLogger`:
-
-    # %%
-    # %load ../code_lightningmodule/logger_csv_acc_basic.py
-    from pytorch_lightning.callbacks import ModelCheckpoint
-    from pytorch_lightning.loggers import CSVLogger
-
-
-    lightning_model = LightningModel(pytorch_model, learning_rate=LEARNING_RATE)
-
+def train_me():
     callbacks = [
         ModelCheckpoint(save_top_k=1, mode="max", monitor="valid_acc")  # save top 1 model
     ]
-    logger = CSVLogger(save_dir="logs/", name="my-model")
+    logger = CSVLogger(save_dir="logs/", name="mv3-cifar10", version="fuheng")
 
-    # %% [markdown]
-    # - Now it's time to train our model:
-
-    # %%
-    # %load ../code_lightningmodule/trainer_nb_basic.py
     import time
 
     torch.set_float32_matmul_precision("high")
     trainer = pl.Trainer(
         max_epochs=NUM_EPOCHS,
         callbacks=callbacks,
-        # progress_bar_refresh_rate=50,  # recommended for notebooks
         accelerator="auto",  # Uses GPUs or TPUs if available
         devices="auto",  # Uses all available GPUs/TPUs if applicable
         logger=logger,
@@ -356,19 +301,22 @@ if __name__ == "__main__":
 
     runtime = (time.time() - start_time) / 60
     print(f"Training took {runtime:.2f} min in total.")
+    return trainer
 
-    # %% [markdown]
-    # ## Evaluating the model
+if __name__ == "__main__":
+    torch.manual_seed(1)
+    data_module = DataModule(data_path="./data")
 
-    # %% [markdown]
-    # - After training, let's plot our training ACC and validation ACC using pandas, which, in turn, uses matplotlib for plotting (PS: you may want to check out [more advanced logger](https://pytorch-lightning.readthedocs.io/en/latest/extensions/logging.html) later on, which take care of it for us):
+    from pytorch_lightning.callbacks import ModelCheckpoint
+    from pytorch_lightning.loggers import CSVLogger
 
-    # %%
-    # %load ../code_lightningmodule/logger_csv_plot_basic.py
+
+    lightning_model = LightningModel(pytorch_model, learning_rate=LEARNING_RATE)
+    trainer = train_me()
+
+    print("----------------------- EVAL -------------------------")
+
     import pandas as pd
-    import matplotlib.pyplot as plt
-
-
     metrics = pd.read_csv(f"{trainer.logger.log_dir}/metrics.csv")
 
     aggreg_metrics = []
@@ -386,31 +334,22 @@ if __name__ == "__main__":
         grid=True, legend=True, xlabel="Epoch", ylabel="ACC"
     )
 
-    plt.show()
+    #plt.show()
+    plt.savefig('eval.png')
 
-    # %% [markdown]
-    # - The `trainer` automatically saves the model with the best validation accuracy automatically for us, we which we can load from the checkpoint via the `ckpt_path='best'` argument; below we use the `trainer` instance to evaluate the best model on the test set:
 
-    # %%
+    print("----------------------- TEST -------------------------")
     trainer.test(model=lightning_model, datamodule=data_module, ckpt_path='best')
 
-    # %% [markdown]
-    # ## Predicting labels of new data
-
-    # %% [markdown]
-    # - We can use the `trainer.predict` method either on a new `DataLoader` (`trainer.predict(dataloaders=...)`) or `DataModule` (`trainer.predict(datamodule=...)`) to apply the model to new data.
-    # - Alternatively, we can also manually load the best model from a checkpoint as shown below:
-
-    # %%
     path = trainer.checkpoint_callback.best_model_path
-    print(path)
+    print(os.getpid(), path)
 
     predicted_labels = []
     lightning_model = LightningModel.load_from_checkpoint(path, model=pytorch_model)
     lightning_model.to('cuda')
     lightning_model.eval()
     test_dataloader = data_module.test_dataloader()
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     acc = torchmetrics.Accuracy(task="multiclass", num_classes=10)
     for batch in test_dataloader:
         features, true_labels = batch
@@ -425,22 +364,10 @@ if __name__ == "__main__":
         acc(predicted_labels.to('cpu'), true_labels)
     predicted_labels[:5]
 
-
-    # %% [markdown]
-    # - As an internal check, if the model was loaded correctly, the test accuracy below should be identical to the test accuracy we saw earlier in the previous section.
-
-    # %%
-    test_acc = acc.compute()
+    test_acc = acc.to('cuda').compute()
     print(f'Test accuracy: {test_acc:.4f} ({test_acc*100:.2f}%)')
 
-    # %% [markdown]
-    # ## Inspecting Failure Cases
-
-    # %% [markdown]
-    # - In practice, it is often informative to look at failure cases like wrong predictions for particular training instances as it can give us some insights into the model behavior and dataset.
-    # - Inspecting failure cases can sometimes reveal interesting patterns and even highlight dataset and labeling issues.
-
-    # %%
+    print("----------------------- ERROR ANALYSIS -------------------------")
     class_dict = {0: 'airplane',
                   1: 'automobile',
                   2: 'bird',
@@ -451,12 +378,6 @@ if __name__ == "__main__":
                   7: 'horse',
                   8: 'ship',
                   9: 'truck'}
-
-    # %%
-    # %load ../code_lightningmodule/plot_failurecases_basic.py
-    # Append the folder that contains the
-    # helper_data.py, helper_plotting.py, and helper_evaluate.py
-    # files so we can import from them
 
     import sys
 
@@ -469,12 +390,7 @@ if __name__ == "__main__":
         model=lightning_model, data_loader=test_dataloader, class_dict=class_dict
     )
 
-
-    # %% [markdown]
-    # - In addition to inspecting failure cases visually, it is also informative to look at which classes the model confuses the most via a confusion matrix:
-
-    # %%
-    # %load ../code_lightningmodule/plot_confusion-matrix_basic.py
+    print("----------------------- CMATRIX -------------------------")
     from torchmetrics import ConfusionMatrix
     import matplotlib
     from mlxtend.plotting import plot_confusion_matrix
@@ -490,13 +406,7 @@ if __name__ == "__main__":
         conf_mat=cmat,
         class_names=class_dict.values(),
         norm_colormap=matplotlib.colors.LogNorm()
-        # normed colormaps highlight the off-diagonals
-        # for high-accuracy models better
     )
 
-    plt.show()
-
-    # %%
-    #%watermark --iversions
-
-
+    #plt.show()
+    plt.savefig('confusion_matrix.png')
