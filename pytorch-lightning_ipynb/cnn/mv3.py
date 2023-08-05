@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import torchmetrics
 
 BATCH_SIZE = 256
-NUM_EPOCHS = 180
+NUM_EPOCHS = 5
 LEARNING_RATE = 0.001
 NUM_WORKERS = 8
 
@@ -210,10 +210,6 @@ class DataModule(pl.LightningDataModule):
         super().__init__()
         self.data_path = data_path
         print(os.getpid(), "😎 call prepare data....")
-        self.prepare_data()
-
-    def prepare_data(self):
-        datasets.CIFAR10(root=self.data_path, download=True)
         self.train_transform = transforms.Compose(
             [
                 transforms.Resize((70, 70)),
@@ -228,6 +224,10 @@ class DataModule(pl.LightningDataModule):
                 transforms.ToTensor(),
             ]
         )
+
+    def prepare_data(self):
+        datasets.CIFAR10(root=self.data_path, download=True)
+
 
     def setup(self, stage=None):
         train = datasets.CIFAR10(
