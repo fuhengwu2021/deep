@@ -72,24 +72,20 @@ def plot_accuracy(train_acc_list, valid_acc_list, results_dir):
 
 
 def show_examples(model, data_loader, unnormalizer=None, class_dict=None):
-    
-        
     for batch_idx, (features, targets) in enumerate(data_loader):
-
         with torch.no_grad():
-            features = features
-            targets = targets
+            features = features.to('cuda')
+            targets = targets.to('cuda')
             logits = model(features)
             predictions = torch.argmax(logits, dim=1)
         break
 
-    fig, axes = plt.subplots(nrows=3, ncols=5,
-                             sharex=True, sharey=True)
+    fig, axes = plt.subplots(nrows=3, ncols=5, sharex=True, sharey=True)
     
     if unnormalizer is not None:
         for idx in range(features.shape[0]):
             features[idx] = unnormalizer(features[idx])
-    nhwc_img = np.transpose(features, axes=(0, 2, 3, 1))
+    nhwc_img = np.transpose(features.cpu(), axes=(0, 2, 3, 1))
     
     if nhwc_img.shape[-1] == 1:
         nhw_img = np.squeeze(nhwc_img.numpy(), axis=3)
